@@ -1,166 +1,277 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
-import { useAsyncData } from '#app';
-import { UiTable } from '@nuxt/ui';
+import { ref, computed, onMounted, watch } from 'vue'
 
+// Оптимізація заголовка сторінки
 useHead({
   title: 'Список продуктів'
-});
+})
 
-// Доступні дані
-const { data: productsData, pending, error } = useAsyncData('products', () =>
-    $fetch('https://dummyjson.com/products')
-);
+// Стани для таблиці
+const products = ref<
+    {
+      id: number
+      title: string
+      description: string
+      price: number
+      rating: number
+      brand: string
+      category: string
+      thumbnail: string
+    }[]
+>([])
+const currentPage = ref(1)
+const rowsPerPage = ref(5)
+const filterText = ref('')
+const isLoading = ref(true)
+const sortKey = ref('')
+const sortDirection = ref<'asc' | 'desc'>('asc')
 
-// Стан таблиці
-const searchQuery = ref('');
-const currentPage = ref(1);
-const itemsPerPage = 10;
-
-// Список продуктів
-const allProducts = computed(() =>
-    productsData.value?.products.map((product) => ({
-      title: product.title,
-      description: product.description,
-      price: product.price,
-      rating: product.rating,
-      brand: product.brand,
-      category: product.category,
-      thumbnail: product.thumbnail
-    })) || []
-);
-
-// Фільтрація по пошуковому запиту
-const filteredProducts = computed(() => {
-  if (!searchQuery.value) {
-    return allProducts.value;
+// Завантаження даних з API
+const fetchData = async () => {
+  isLoading.value = true
+  try {
+    const response = await fetch('https://dummyjson.com/products')
+    const data = await response.json()
+    products.value = data.products
+  } catch (error) {
+    console.error('Помилка завантаження даних:', error)
+  } finally {
+    isLoading.value = false
   }
-  return allProducts.value.filter((product) =>
-      Object.values(product).some((value) =>
-          String(value).toLowerCase().includes(searchQuery.value.toLowerCase())
-      )
-  );
-});
+}
 
-// Сортування даних
-const sortBy = ref('');
-const sortOrder = ref('asc');
+onMounted(fetchData)
 
-const sortedProducts = computed(() => {
-  if (!sortBy.value) {
-    return filteredProducts.value;
-  }
-  return [...filteredProducts.value].sort((a, b) => {
-    const valA = a[sortBy.value];
-    const valB = b[sortBy.value];
+// Список із фільтром
+const filteredData = computed(() =>
+    products.value.filter((row) =>
+        Object.values(row).some((value) =>
+            String(value).toLowerCase().includes(filterText.value.toLowerCase())
+        )
+    )
+)
 
-    let comparison = 0;
-    if (valA > valB) {
-      comparison = 1;
-    } else if (valA < valB) {
-      comparison = -1;
-    }
-    return sortOrder.value === 'asc' ? comparison : -comparison;
-  });
-});
+// Список із сортуванням
+const sortedData = computed(() =>
+    filteredData.value.slice().sort((a, b) => {
+      if (!sortKey.value) return 0
+      const valueA = a[sortKey.value as keyof typeof a]
+      const valueB = b[sortKey.value as keyof typeof b]
+      if (valueA < valueB) return sortDirection.value === 'asc' ? -1 : 1
+      if (valueA > valueB) return sortDirection.value === 'asc' ? 1 : -1
+      return 0
+    })
+)
 
-// Пагінація
-const paginatedProducts = computed(() => {
-  const startIdx = (currentPage.value - 1) * itemsPerPage;
-  return sortedProducts.value.slice(startIdx, startIdx + itemsPerPage);
-});
+// Дані для поточної сторінки
+const paginatedData = computed(() =>
+    sortedData.value.slice(
+        (currentPage.value - 1) * rowsPerPage.value,
+        currentPage.value * rowsPerPage.value
+    )
+)
 
-const totalPages = computed(() =>
-    Math.ceil(sortedProducts.value.length / itemsPerPage)
-);
-
-const setSort = (key) => {
-  if (sortBy.value === key) {
-    sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc';
+// Зміна напрямку сортування
+const changeSort = (key: string) => {
+  if (sortKey.value === key) {
+    sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
   } else {
-    sortBy.value = key;
-    sortOrder.value = 'asc';
+    sortKey.value = key
+    sortDirection.value = 'asc'
   }
-};
+}
+
+// Відстеження зміни рядка пошуку
+watch(filterText, () => {
+  currentPage.value = 1 // Перехід на першу сторінку
+})
 </script>
 
 <template>
-  <div>
-    <h1>Список продуктів</h1>
+  <div class="container">
+    <h1 class="title">Список продуктів</h1>
 
-    <!-- Поле для пошуку -->
-    <input
-        v-model="searchQuery"
-        placeholder="Пошук продуктів"
-        class="search-input"
-    />
+    <!-- Пошук -->
+    <div class="search-wrap">
+      <input
+          type="text"
+          v-model="filterText"
+          placeholder="🔍 Пошук продуктів..."
+          class="search-input"
+      />
+    </div>
 
     <!-- Таблиця -->
-    <UiTable :items="paginatedProducts">
-      <template #default="{ item }">
+    <div class="table-container">
+      <n-table v-if="!isLoading" class="custom-table">
+        <thead>
         <tr>
-          <td>{{ item.title }}</td>
-          <td>{{ item.description }}</td>
-          <td>{{ item.price }}</td>
-          <td>
-            <span
-                :style="{ color: item.rating < 4.5 ? 'red' : 'green' }"
-            >
-              {{ item.rating }}
-            </span>
+          <th @click="changeSort('title')" class="sortable">
+            Назва
+            <span v-if="sortKey === 'title'">({{ sortDirection }})</span>
+          </th>
+          <th>Опис</th>
+          <th @click="changeSort('price')" class="sortable">
+            Ціна
+            <span v-if="sortKey === 'price'">({{ sortDirection }})</span>
+          </th>
+          <th @click="changeSort('rating')" class="sortable">
+            Оцінка
+            <span v-if="sortKey === 'rating'">({{ sortDirection }})</span>
+          </th>
+          <th>Бренд</th>
+          <th>Категорія</th>
+          <th>Фото</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr v-for="product in paginatedData" :key="product.id" class="table-row">
+          <td>{{ product.title }}</td>
+          <td>{{ product.description }}</td>
+          <td>{{ product.price }} $</td>
+          <td :class="{ 'high-rating': product.rating >= 4.5, 'low-rating': product.rating < 4.5 }">
+            {{ product.rating }}
           </td>
-          <td>{{ item.brand }}</td>
-          <td>{{ item.category }}</td>
+          <td>{{ product.brand }}</td>
+          <td>{{ product.category }}</td>
           <td>
-            <img
-                :src="item.thumbnail"
-                alt="Фото"
-                class="thumbnail"
-            />
+            <img :src="product.thumbnail" alt="Фото" class="product-img" />
           </td>
         </tr>
-      </template>
-    </UiTable>
+        </tbody>
+      </n-table>
+
+      <!-- Завантаження -->
+      <div v-else class="loading">Завантаження...</div>
+    </div>
 
     <!-- Пагінація -->
     <div class="pagination">
-      <button
-          @click="currentPage -= 1"
-          :disabled="currentPage === 1"
-      >
-        Попередня
+      <button :disabled="currentPage === 1" @click="currentPage--" class="btn">
+        Назад
       </button>
-
-      <span>Сторінка {{ currentPage }} з {{ totalPages }}</span>
-
+      <span>Сторінка {{ currentPage }} із {{ Math.ceil(filteredData.length / rowsPerPage) }}</span>
       <button
-          @click="currentPage += 1"
-          :disabled="currentPage === totalPages"
+          :disabled="currentPage === Math.ceil(filteredData.length / rowsPerPage)"
+          @click="currentPage++"
+          class="btn"
       >
-        Наступна
+        Вперед
       </button>
     </div>
   </div>
 </template>
 
 <style scoped>
-.thumbnail {
-  width: 100px;
-  height: 100px;
+/* Загальний стиль контейнера */
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+/* Заголовок */
+.title {
+  font-family: 'Inter', sans-serif;
+  font-size: 2rem;
+  font-weight: 600;
+  text-align: center;
+  color: #1a202c;
+  margin-bottom: 2rem;
+}
+
+/* Поле пошуку */
+.search-wrap {
+  margin-bottom: 1.5rem;
+}
+
+.search-input {
+  width: 100%;
+  padding: 0.5rem 1rem;
+  font-size: 1rem;
+  border: 1px solid #ccc;
+  border-radius: 0.5rem;
+  outline: none;
+  transition: border-color 0.3s;
+}
+
+.search-input:focus {
+  border-color: #3182ce;
+}
+
+/* Таблиця */
+.table-container {
+  overflow-x: auto;
+}
+
+.custom-table thead {
+  background-color: #f7fafc;
+}
+
+.custom-table th {
+  padding: 0.75rem;
+  text-align: left;
+  font-weight: bold;
+  color: #4a5568;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.custom-table th.sortable:hover {
+  background-color: #ebf8ff;
+}
+
+.custom-table tbody .table-row:hover {
+  background-color: #f9fafb;
+}
+
+.custom-table td {
+  padding: 0.75rem;
+  color: #2d3748;
+}
+
+.high-rating {
+  color: #38a169;
+}
+
+.low-rating {
+  color: #e53e3e;
+}
+
+/* Фото */
+.product-img {
+  width: 64px;
+  height: 64px;
+  border-radius: 0.375rem;
   object-fit: cover;
 }
-.search-input {
-  padding: 8px;
-  margin-bottom: 16px;
-  width: 100%;
-  max-width: 400px;
-  border-radius: 4px;
-  border: 1px solid #ccc;
-}
+
+/* Пагінація */
 .pagination {
-  margin-top: 16px;
+  margin-top: 1.5rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.btn {
+  padding: 0.5rem 1rem;
+  font-size: 1rem;
+  border: none;
+  border-radius: 0.375rem;
+  background-color: #4299e1;
+  color: white;
+  cursor: pointer;
+  transition: background-color 0.3s ease, transform 0.2s ease;
+}
+
+.btn:hover:not(:disabled) {
+  background-color: #3182ce;
+  transform: translateY(-2px);
+}
+
+.btn:disabled {
+  background-color: #e2e8f0;
+  cursor: not-allowed;
 }
 </style>
